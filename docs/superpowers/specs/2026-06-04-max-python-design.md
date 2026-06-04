@@ -44,8 +44,10 @@
 - **Поллинг:** `dp.start_polling(bot)`; при активной webhook-подписке апдейты не приходят. У `Bot`
   есть флаг `auto_check_subscriptions` (по умолчанию проверяет подписки перед поллингом) и метод
   `bot.delete_webhook()`.
-- **`auto_requests`** (по умолчанию `True`): SDK может дозапрашивать поля `chat`/`from_user` через API.
-  В харнессе выключим (`auto_requests=False`), чтобы не плодить эндпоинты в моке.
+- **`auto_requests`** (по умолчанию `True`): SDK дозапрашивает `chat`/`from_user` через API и при этом
+  проставляет `message.bot` (без чего `event.message.answer()` падает с `RuntimeError`). Поэтому
+  **оставляем дефолт `True`** — а мок дополнительно отвечает на `GET /chats/{id}` (вызывается для
+  message-апдейта с непустым `chat_id`). Выверено по `maxapi/utils/updates.py:enrich_event`.
 
 ## Структура файлов
 
@@ -107,7 +109,6 @@ async def main() -> None:
             "(см. README — токен выдаётся через business.max.ru)."
         )
     bot = Bot(token)
-    await bot.delete_webhook()  # иначе при активной webhook-подписке поллинг молчит
     logger.info("🤖 MAX echo-бот запущен (long polling). Напишите ему в MAX.")
     await dp.start_polling(bot)
 
@@ -117,38 +118,44 @@ if __name__ == "__main__":
 ```
 
 Поведение:
-- `/start` → приветствие. Командный фильтр перехватывает апдейт раньше echo-хендлера —
-  приветствие не дублируется эхом (как `CommandStart` vs `F.text` в `telegram/python`).
-- Любой текст → тот же текст обратно, с логом `← получено: ...` (единый формат лога матрицы).
-- Пустой/нетекстовый body → `if not text: return` (не шлём пустой ответ — как guard в `max/typescript`).
+- `/start` → приветствие. Фильтр `CommandStart()` SDK разворачивает в магик-фильтр
+  `F.message.body.text.split()[0] == '/start'` — команда матчится раньше echo-хендлера, приветствие
+  не дублируется эхом (как `CommandStart` vs `F.text` в `telegram/python`).
+- Любой текст → тот же текст обратно (фильтр `F.message.body.text` отсекает пустой/нетекстовый body),
+  с логом `← получено: ...` (единый формат лога матрицы).
 - Нет токена → `sys.exit(...)` с подсказкой, в сеть не лезет.
 
-> На этапе реализации против исходников `maxapi` финально выверяются (это деталь плана, не дизайна):
-> точное имя атрибута входящего текста (`event.message.body.text` vs `event.message.text`); сигнатуры
-> фильтров (`Command`, `message_created`); имя метода сброса webhook перед поллингом
-> (`bot.delete_webhook()` vs `bot.unsubscribe_webhook(...)`) — либо вовсе опора на дефолтный
-> `auto_check_subscriptions=True`, если явный сброс не нужен.
+> Финальные имена выверены по исходникам `maxapi` (v0.9.4): импорт `from maxapi import Bot, Dispatcher, F`
+> и `from maxapi.types import MessageCreated, CommandStart`; декоратор `@dp.message_created(<фильтр>)`;
+> чтение `event.message.body.text`; ответ `event.message.answer(text)`. Метода сброса webhook в `bot.py`
+> нет (в SDK только `subscribe/unsubscribe_webhook`; свежий long-polling бот подписок не имеет).
 
 ### `verify_local.py` — мок-харнесс (ключевая часть)
 
 Идея ровно как у `max/typescript/verify-local.mjs`, но на Python + `aiohttp` (он и так в зависимостях `maxapi`):
 
-- Поднимает фейковый MAX-сервер на `127.0.0.1:<random-port>`, переопределяет `bot.API_URL` на него.
-- Бот создаётся с `auto_requests=False` и `auto_check_subscriptions=False`, чтобы SDK не дёргал
-  лишние эндпоинты. Мок отвечает на минимум: `GET /me`, `GET /updates` (один `message_created` с
-  текстом + probe-апдейт с пустым текстом), `POST /messages` (ловим эхо).
-- Обработчик в харнессе — дословная копия логики `bot.py` (как в TS-ячейке; та же оговорка
-  «правьте оба места»).
+- Поднимает фейковый MAX-сервер (`aiohttp.web`) на `127.0.0.1:<random-port>`, переопределяет
+  `bot.API_URL` на него (читается при создании `ClientSession` → подмена работает).
+- Тестовый бот: `Bot('test-token')` с `auto_check_subscriptions=False` (чтобы SDK не дёргал
+  `GET /subscriptions` перед поллингом). `auto_requests` оставляем дефолтным `True` — иначе SDK не
+  проставит `message.bot` и `event.message.answer()` упадёт.
+- Реальный `Dispatcher` гоняется через `dp.start_polling(bot)` как asyncio-task; харнесс ждёт нужные
+  POST'ы и затем останавливает поллинг (`dp.polling = False` + отмена task).
+- Мок отвечает на 4 эндпоинта (pydantic-валидные тела, формы выверены по `maxapi/methods` + `maxapi/types`):
+  - `GET /me` → `User` (`user_id`, `first_name`, `is_bot`, `last_activity_time`);
+  - `GET /updates` → `{"marker": …, "updates": […]}`; батч отдаётся **один раз**, далее пусто с
+    задержкой (SDK не шлёт `marker` в запросе → иначе бесконечный цикл). Updates: текст, `/start`, probe (text=null);
+  - `GET /chats/{id}` → `Chat` (`chat_id`, `type='dialog'`, `status='active'`, `last_event_time`,
+    `participants_count`, `is_public`) — вызывается `enrich_event` для message-апдейта;
+  - `POST /messages` → `{"message": <Message>}` (`SendedMessage`); здесь ловим эхо.
+- Обработчик в харнессе — дословная копия логики `bot.py` (как в TS-ячейке; та же оговорка «правьте оба места»).
 - Проверяет:
-  - ✅ happy path: на текст бот ответил **тем же текстом** в **тот же чат** (`POST /messages` с
-    нужным `chat_id` и `body.text`);
-  - ✅ авторизация: токен ушёл **query-параметром `access_token`** (legacy-MAX, не заголовок);
-  - 🔍 probe: на пустой текст ответа НЕ было (ровно один `POST /messages`).
+  - ✅ happy path: на текст бот ответил **тем же текстом** в **тот же чат** (`POST /messages?chat_id=…`,
+    тело `{"text": …}`);
+  - ✅ `/start`: пришло приветствие (НЕ эхо `/start`) — подтверждает раздельную маршрутизацию команды;
+  - ✅ авторизация: на запросах есть **query-параметр `access_token`** (legacy-MAX, не заголовок `Authorization`);
+  - 🔍 probe: на `text=null` ответа НЕ было (POST'ов ровно 2: эхо + приветствие).
 - Exit `0` при PASS, `1` при FAIL/таймауте.
-
-> Формы JSON в ответах мока должны проходить pydantic-валидацию моделей `maxapi`
-> (`GET /updates` → модель `GettedUpdates`, `GET /me` → `User`). Точные поля выверяются на этапе
-> реализации против `maxapi/types` и `maxapi/methods/types`. Это деталь плана.
 
 ### `requirements.txt`
 
