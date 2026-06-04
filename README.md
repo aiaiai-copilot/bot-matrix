@@ -19,7 +19,7 @@ bot-matrix/
 | Мессенджер ↓ \ Стек → | TypeScript | Python |
 | --------------------- | ---------- | ------ |
 | **Telegram**          | ✅ [`telegram/typescript`](telegram/typescript) | ✅ [`telegram/python`](telegram/python) |
-| **MAX**               | ✅ [`max/typescript`](max/typescript) | — |
+| **MAX**               | ✅ [`max/typescript`](max/typescript) | ✅ [`max/python`](max/python) |
 
 ✅ — готов · 🚧 — в работе · — — запланирован
 
