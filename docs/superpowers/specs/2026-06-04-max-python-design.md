@@ -18,7 +18,7 @@
 ## Решения (приняты при брейншторме)
 
 - **SDK — `maxapi`** (PyPI-пакет `maxapi`, репозиторий официальной org `max-messenger/max-botapi-python`,
-  v0.9.4, Python ≥ 3.10). Его API почти 1:1 совпадает с aiogram: `Bot`, `Dispatcher`,
+  0.9.x — установлена 0.9.18, Python ≥ 3.10). Его API почти 1:1 совпадает с aiogram: `Bot`, `Dispatcher`,
   `@dp.message_created(...)`, `event.message.answer(...)`, `dp.start_polling(bot)`. Это даёт
   согласованность сразу по двум осям матрицы — с MAX-осью (официальный SDK, как в `max/typescript`)
   и с Python-осью (aiogram-стиль, как в `telegram/python`). Альтернатива — сырой HTTP-клиент к
@@ -35,20 +35,18 @@
 
 ## Ключевые факты SDK `maxapi` (выверены по исходникам, 2026-06-04)
 
-> ⚠️ **Обновление (исполнение плана, 2026-06-04):** факты ниже выверялись по `maxapi` **0.9.4**.
-> Реализованная ячейка установила **0.9.18**, где SDK мигрировал на современный транспорт: хост по
-> умолчанию — **`https://platform-api.max.ru`** (`connection/base.py:33`), токен идёт **HTTP-заголовком
-> `Authorization`** (`bot.py:153`), а override хоста — через инстанс-атрибут **`bot.api_url`** (или
-> `set_api_url()`), не class-атрибут `API_URL`. Источник истины — `max/python/verify_local.py` и
-> `max/python/README.md`. Остальные факты (импорты, фильтры, `auto_requests`, порядок хендлеров,
-> эндпоинты `/me`,`/updates`,`/chats/{id}`,`/messages`) подтвердились и в 0.9.18.
+> ℹ️ **Версия:** факты ниже выверены по установленной **`maxapi` 0.9.18** (изначально черновик делался
+> по 0.9.4; в 0.9.18 SDK мигрировал на современный транспорт — `platform-api.max.ru` + заголовок
+> `Authorization`, см. хост/токен ниже). Источник истины — `max/python/verify_local.py` и
+> `max/python/README.md`.
 
-- **Хост:** `API_URL = 'https://botapi.max.ru'` — legacy-хост, заданный class-атрибутом на
-  `BaseConnection` (родитель `Bot`). Читается при создании `aiohttp.ClientSession(base_url=...)` →
-  **переопределяется присваиванием `bot.API_URL = ...` до первого запроса** (основа мок-харнесса).
-- **Токен:** передаётся в `Bot(token)` и кладётся в `self.params = {'access_token': token}` —
-  то есть уходит **query-параметром** `access_token` (legacy-стиль MAX). В отличие от modern-хоста
-  и TS-SDK, где токен идёт заголовком `Authorization: <token>`. Это образовательный нюанс для README.
+- **Хост:** `API_URL = 'https://platform-api.max.ru'` — современный хост, заданный class-атрибутом на
+  `BaseConnection` (родитель `Bot`, `connection/base.py:33`) и копируемый в инстанс-атрибут `bot.api_url`
+  в `__init__`. Читается при создании `aiohttp.ClientSession(base_url=...)` → **переопределяется
+  присваиванием `bot.api_url = ...` (или `bot.set_api_url(...)`) до первого запроса** (основа мок-харнесса).
+- **Токен:** передаётся в `Bot(token)` и кладётся в `self.headers = {'Authorization': token}`
+  (`bot.py:153`) — то есть уходит **HTTP-заголовком** `Authorization: <token>` (сырой токен, без префикса
+  `Bearer`), как у modern-хоста и TS-SDK. `self.params` пуст — query-параметра `access_token` нет.
 - **Поллинг:** `dp.start_polling(bot)`; при активной webhook-подписке апдейты не приходят. У `Bot`
   есть флаг `auto_check_subscriptions` (по умолчанию проверяет подписки перед поллингом) и метод
   `bot.delete_webhook()`.
@@ -133,7 +131,7 @@ if __name__ == "__main__":
   с логом `← получено: ...` (единый формат лога матрицы).
 - Нет токена → `sys.exit(...)` с подсказкой, в сеть не лезет.
 
-> Финальные имена выверены по исходникам `maxapi` (v0.9.4): импорт `from maxapi import Bot, Dispatcher, F`
+> Финальные имена выверены по исходникам `maxapi` (v0.9.18): импорт `from maxapi import Bot, Dispatcher, F`
 > и `from maxapi.types import MessageCreated, CommandStart`; декоратор `@dp.message_created(<фильтр>)`;
 > чтение `event.message.body.text`; ответ `event.message.answer(text)`. Метода сброса webhook в `bot.py`
 > нет (в SDK только `subscribe/unsubscribe_webhook`; свежий long-polling бот подписок не имеет).
@@ -143,7 +141,7 @@ if __name__ == "__main__":
 Идея ровно как у `max/typescript/verify-local.mjs`, но на Python + `aiohttp` (он и так в зависимостях `maxapi`):
 
 - Поднимает фейковый MAX-сервер (`aiohttp.web`) на `127.0.0.1:<random-port>`, переопределяет
-  `bot.API_URL` на него (читается при создании `ClientSession` → подмена работает).
+  `bot.api_url` на него (инстанс-атрибут, читается при создании `ClientSession` → подмена работает).
 - Тестовый бот: `Bot('test-token')` с `auto_check_subscriptions=False` (чтобы SDK не дёргал
   `GET /subscriptions` перед поллингом). `auto_requests` оставляем дефолтным `True` — иначе SDK не
   проставит `message.bot` и `event.message.answer()` упадёт.
@@ -163,7 +161,7 @@ if __name__ == "__main__":
   - ✅ happy path: на текст бот ответил **тем же текстом** в **тот же чат** (`POST /messages?chat_id=…`,
     тело `{"text": …}`);
   - ✅ `/start`: пришло приветствие (НЕ эхо `/start`) — подтверждает раздельную маршрутизацию команды;
-  - ✅ авторизация: на запросах есть **query-параметр `access_token`** (legacy-MAX, не заголовок `Authorization`);
+  - ✅ авторизация: на запросах есть **заголовок `Authorization`** (сырой токен, без `Bearer`);
   - 🔍 probe: на `text=null` ответа НЕ было (POST'ов ровно 2: эхо + приветствие).
 - Exit `0` при PASS, `1` при FAIL/таймауте.
 
@@ -200,8 +198,8 @@ BOT_TOKEN=
 - «Как устроено»: `Dispatcher`, `@dp.message_created(...)`, `event.message.answer(...)`,
   `dp.start_polling(bot)`; событие `message_created`, `/start` отдельным хендлером.
 - Блок **«Проверка без токена»**: `python verify_local.py` — что делает мок-харнесс и что проверяет.
-- Образовательный нюанс: legacy-хост `botapi.max.ru` + токен query-параметром `access_token`
-  (vs modern `platform-api.max.ru` + заголовок `Authorization` у TS-SDK).
+- Нюанс MAX-API: хост `platform-api.max.ru` + токен заголовком `Authorization` — так же, как у
+  TS-SDK `@maxhub/max-bot-api` из соседней ячейки (современный транспорт по обеим ячейкам).
 - Источники: SDK `maxapi` (<https://github.com/max-messenger/max-botapi-python>),
   Bot API MAX (<https://dev.max.ru/docs-api>), получение токена (<https://business.max.ru>).
 

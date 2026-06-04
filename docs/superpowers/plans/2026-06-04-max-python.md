@@ -6,7 +6,7 @@
 
 **Architecture:** Самостоятельный стартер в `max/python/`: `bot.py` (echo на `maxapi` long polling, `/start` + эхо текста), `verify_local.py` (мок-харнесс — настоящий SDK против фейкового MAX-сервера на aiohttp), конфиги (`requirements.txt`, `.env.example`, `.gitignore`), README. Живой тест невозможен (токен MAX недоступен физлицам/самозанятым), поэтому приёмка полностью оффлайн: import-smoke + guard без токена + мок-харнесс.
 
-**Tech Stack:** Python ≥ 3.10, `maxapi` 0.9.4 (aiogram-подобный: `Bot`/`Dispatcher`/`@dp.message_created`/`F`), `python-dotenv`, `aiohttp` (транзитивно от `maxapi` — используется в харнессе).
+**Tech Stack:** Python ≥ 3.10, `maxapi` 0.9.x (установлена 0.9.18; aiogram-подобный: `Bot`/`Dispatcher`/`@dp.message_created`/`F`), `python-dotenv`, `aiohttp` (транзитивно от `maxapi` — используется в харнессе).
 
 **Спека:** `docs/superpowers/specs/2026-06-04-max-python-design.md`
 
@@ -16,27 +16,24 @@
 
 Эта ячейка — «тонкий» стартер без pytest (как `max/typescript` и `telegram/python`). Роль «теста» играют: import-smoke (`python -c "import bot"`), guard-поведение (запуск без `BOT_TOKEN` → выход с кодом 1, без сети) и **мок-харнесс** `verify_local.py` (прогон настоящего SDK против локального фейкового MAX). Живой round-trip против реального MAX **невозможен** — токен недоступен (выдаётся только верифицированным ИП/юрлицам — резидентам РФ).
 
-## Ключевые факты SDK (выверено по исходникам `max-messenger/max-botapi-python`, v0.9.4)
+## Ключевые факты SDK (выверено по исходникам `max-messenger/max-botapi-python`, v0.9.18)
 
 Эти факты — основа корректности кода ниже. Не менять без сверки с исходниками.
 
-> ⚠️ **Обновление (исполнение, 2026-06-04):** установлена `maxapi` **0.9.18**, где два факта ниже
-> изменились — SDK мигрировал на хост **`https://platform-api.max.ru`** + токен **заголовком
-> `Authorization`** (override хоста — через инстанс `bot.api_url`/`set_api_url()`, не class-атрибут
-> `API_URL`). Поэтому реализованный `verify_local.py` бьёт по `bot.api_url` и проверяет заголовок
-> `Authorization` (а не `access_token` query), а README ячейки описывает современный хост. Остальное
-> (импорты, фильтры, `auto_requests`, порядок хендлеров, эндпоинты) подтвердилось в 0.9.18. Источник
-> истины — `max/python/{verify_local.py,README.md}`.
+> ℹ️ **Версия:** факты выверены по установленной **`maxapi` 0.9.18**. Изначально черновик делался
+> по 0.9.4; в 0.9.18 SDK мигрировал на современный транспорт — `platform-api.max.ru` + заголовок
+> `Authorization` (override хоста — через инстанс `bot.api_url`/`set_api_url()`, не class-атрибут
+> `API_URL`). Источник истины — `max/python/{verify_local.py,README.md}`.
 
 - Импорты: `from maxapi import Bot, Dispatcher, F`; `from maxapi.types import MessageCreated, CommandStart`.
 - Хендлер: `@dp.message_created(<фильтр>)`; функция получает `event: MessageCreated`.
 - Текст входящего: `event.message.body.text` (НЕ `event.message.text`). Ответ: `await event.message.answer(text)`.
 - `CommandStart()` SDK разворачивает в магик-фильтр `F.message.body.text.split()[0] == '/start'` (см. `maxapi/filters/handler.py`). Хендлеры матчатся в порядке регистрации, первый совпавший побеждает → `on_start` регистрируем ПЕРВЫМ.
-- `Bot(token)` кладёт токен в `self.params = {'access_token': token}` → токен идёт **query-параметром** `access_token` на всех запросах (legacy-хост `https://botapi.max.ru`).
-- `API_URL = 'https://botapi.max.ru'` — class-атрибут `BaseConnection`; читается при ленивом создании `aiohttp.ClientSession(base_url=...)` → переопределяется присваиванием `bot.API_URL = <url>` ДО первого запроса (основа харнесса).
+- `Bot(token)` кладёт токен в `self.headers = {'Authorization': token}` (`bot.py:153`) → токен идёт **HTTP-заголовком** `Authorization: <token>` (сырой, без `Bearer`) на всех запросах; `self.params` пуст (query-параметра `access_token` нет).
+- `API_URL = 'https://platform-api.max.ru'` — class-атрибут `BaseConnection` (`connection/base.py:33`), копируется в инстанс `bot.api_url` в `__init__`; читается при ленивом создании `aiohttp.ClientSession(base_url=...)` → переопределяется присваиванием `bot.api_url = <url>` (или `bot.set_api_url(...)`) ДО первого запроса (основа харнесса).
 - `dp.start_polling(bot)`: `__ready` → (если `auto_check_subscriptions` → `GET /subscriptions`) → `check_me` (`GET /me`) → цикл `bot.get_updates()` (`GET /updates`, БЕЗ `marker` в запросе) → `process_update_request` → `handle`.
 - `auto_requests=True` (дефолт): `enrich_event` для message-апдейта с `recipient.chat_id is not None` вызывает `GET /chats/{id}` И проставляет `message.bot`. При `auto_requests=False` функция выходит рано и `message.bot` остаётся `None` → `event.message.answer()` падает с `RuntimeError`. **Поэтому `auto_requests` оставляем дефолтным.**
-- `answer(text)` → `send_message(chat_id=recipient.chat_id, ...)` → `POST /messages?access_token=…&chat_id=…`, тело `{"attachments": [], "text": <text>, "notify": null}`, ответ парсится в `SendedMessage` (`{"message": <Message>}`).
+- `answer(text)` → `send_message(chat_id=recipient.chat_id, ...)` → `POST /messages?chat_id=…` (токен — в заголовке `Authorization`, не в query), тело `{"attachments": [], "text": <text>, "notify": null}`, ответ парсится в `SendedMessage` (`{"message": <Message>}`).
 
 ## Структура файлов
 
@@ -95,7 +92,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
-Expected: установка без ошибок; `pip show maxapi` показывает `Version: 0.9.4` (или новее в пределах `<1`).
+Expected: установка без ошибок; `pip show maxapi` показывает `Version: 0.9.18` (или новее в пределах `<1`).
 
 - [ ] **Step 5: Проверить, что SDK импортируется**
 
@@ -208,7 +205,7 @@ git commit -m "feat(max/python): echo-бот на maxapi (long polling, /start +
 
 ```python
 # Локальная проверка echo-бота БЕЗ реального токена и БЕЗ обращения к проду MAX.
-# Поднимаем фейковый MAX-сервер (aiohttp), направляем настоящий SDK на него (bot.API_URL),
+# Поднимаем фейковый MAX-сервер (aiohttp), направляем настоящий SDK на него (bot.api_url),
 # симулируем GET /updates и ловим исходящие POST /messages (это и есть эхо).
 # Хендлеры берём из bot.py напрямую (from bot import dp) — гоняем реальные обработчики бота.
 import asyncio
@@ -228,7 +225,7 @@ START_CHAT_ID = 779
 PROBE_CHAT_ID = 888
 TS = 1700000000000
 
-posts = []            # пойманные POST /messages: {chat_id, text, access_token}
+posts = []            # пойманные POST /messages: {chat_id, text, authorization}
 batch_delivered = False
 
 
@@ -293,10 +290,11 @@ async def handle_chat(request):
 
 async def handle_messages(request):
     chat_id = request.query.get("chat_id")
-    access_token = request.query.get("access_token")
+    # Авторизация в maxapi 0.9.18 — через HTTP-заголовок Authorization (а не query access_token).
+    authorization = request.headers.get("Authorization")
     body = await request.json()
-    print(f"[mock] ← POST /messages chat_id={chat_id} text={body.get('text')!r} access_token={access_token}")
-    posts.append({"chat_id": chat_id, "text": body.get("text"), "access_token": access_token})
+    print(f"[mock] ← POST /messages chat_id={chat_id} text={body.get('text')!r} Authorization={authorization}")
+    posts.append({"chat_id": chat_id, "text": body.get("text"), "authorization": authorization})
     resp_msg = {
         "sender": _user(1, "Echo Bot", is_bot=True),
         "recipient": {"chat_id": int(chat_id) if chat_id else None, "chat_type": "dialog"},
@@ -341,8 +339,8 @@ async def main() -> int:
 
     # настоящий SDK, направленный на мок
     bot = Bot("test-token")
-    bot.API_URL = base_url                  # перенаправляем на фейковый сервер
-    bot.auto_check_subscriptions = False    # не дёргать GET /subscriptions перед поллингом
+    bot.api_url = base_url                   # перенаправляем на фейковый сервер (instance-атрибут, который читает ClientSession)
+    bot.auto_check_subscriptions = False     # не дёргать GET /subscriptions перед поллингом
     # auto_requests НЕ трогаем (дефолт True) — иначе SDK не проставит message.bot и answer() упадёт
 
     polling_task = asyncio.create_task(dp.start_polling(bot))
@@ -363,13 +361,13 @@ async def main() -> int:
 
     text_ok = echo_post is not None and echo_post["text"] == ECHO_TEXT
     start_ok = start_post is not None and start_post["text"] == GREETING
-    auth_ok = len(posts) > 0 and all(p["access_token"] == "test-token" for p in posts)
+    auth_ok = len(posts) > 0 and all(p["authorization"] == "test-token" for p in posts)
     probe_ok = len(posts) == 2 and not any(p["chat_id"] == str(PROBE_CHAT_ID) for p in posts)
 
     print("\n=== РЕЗУЛЬТАТ ===")
     print(f"✅ happy path — эхо текста:   {(echo_post['text'] if echo_post else None)!r}  (ожидали {ECHO_TEXT!r})  {'✅' if text_ok else '❌'}")
     print(f"✅ /start — приветствие:      {(start_post['text'] if start_post else None)!r}  (НЕ эхо '/start')  {'✅' if start_ok else '❌'}")
-    print(f"✅ авторизация — access_token query на POST /messages  {'✅' if auth_ok else '❌'}")
+    print(f"✅ авторизация — заголовок Authorization на POST /messages  {'✅' if auth_ok else '❌'}")
     print(f"🔍 probe — POST'ов всего: {len(posts)}  (ожидали 2; на text=null ответа быть не должно)  {'✅' if probe_ok else '❌'}")
 
     ok = text_ok and start_ok and auth_ok and probe_ok
@@ -480,15 +478,19 @@ await dp.start_polling(bot)
 
 ### Нюанс MAX-API (Python SDK)
 
-`maxapi` работает с **legacy-хостом `https://botapi.max.ru`** и передаёт токен **query-параметром**
-`access_token`. (Для сравнения: современный TypeScript-SDK `@maxhub/max-bot-api` из соседней ячейки
-использует хост `platform-api.max.ru` и заголовок `Authorization: <token>`.)
+`maxapi` (версии `0.9.x`) работает с хостом **`https://platform-api.max.ru`** и передаёт токен
+**HTTP-заголовком** `Authorization: <token>` (сырой токен, без префикса `Bearer`) — так же, как
+официальный TypeScript-SDK `@maxhub/max-bot-api` из соседней ячейки (тот же современный хост и тот
+же способ авторизации).
+
+> Хост можно переопределить через `bot.api_url = <url>` (или `bot.set_api_url(<url>)`) до первого
+> запроса — на этом построена локальная проверка `verify_local.py` (SDK направляется на фейковый MAX).
 
 ## Проверка без токена (`python verify_local.py`)
 
 Токен MAX недоступен физлицам/самозанятым, поэтому живой запуск не для всех возможен. Локальная
 проверка [`verify_local.py`](verify_local.py) поднимает **фейковый MAX-сервер** на `localhost`,
-направляет на него настоящий SDK (через `bot.API_URL`), симулирует входящие апдейты и проверяет
+направляет на него настоящий SDK (через `bot.api_url`), симулирует входящие апдейты и проверяет
 исходящие ответы:
 
 ```bash
@@ -497,7 +499,7 @@ python verify_local.py
 
 - ✅ на текст бот отвечает тем же текстом в тот же чат;
 - ✅ на `/start` приходит приветствие (отдельным хендлером, не эхом);
-- ✅ авторизация — токен query-параметром `access_token`;
+- ✅ авторизация — токен HTTP-заголовком `Authorization`;
 - 🔍 на сообщение без текста ответа нет.
 
 > Проверка подтверждает корректность **кода и интеграции с SDK**; она не заменяет проверку против
@@ -513,7 +515,7 @@ python verify_local.py
 
 - [ ] **Step 2: Проверить ссылки и команды глазами**
 
-Прочитать README, сверить: команды запуска совпадают с Task 1–3; имена файлов (`verify_local.py`, `bot.py`) и SDK-фактов (хост, `access_token`) — с реализацией.
+Прочитать README, сверить: команды запуска совпадают с Task 1–3; имена файлов (`verify_local.py`, `bot.py`) и SDK-фактов (хост `platform-api.max.ru`, заголовок `Authorization`) — с реализацией.
 Expected: расхождений нет.
 
 - [ ] **Step 3: Commit**
