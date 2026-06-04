@@ -1,0 +1,26 @@
+{
+  "name": "max-typescript-echo-bot-starter",
+  "version": "0.1.0",
+  "description": "Минимальный echo-бот для мессенджера MAX на TypeScript (официальный SDK @maxhub/max-bot-api)",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=18.18.0"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "verify:local": "node verify-local.mjs"
+  },
+  "dependencies": {
+    "@maxhub/max-bot-api": "^0.2.2",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

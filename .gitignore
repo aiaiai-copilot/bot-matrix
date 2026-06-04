@@ -1,0 +1,22 @@
+# Зависимости
+node_modules/
+
+# Сборка
+dist/
+build/
+
+# Секреты / окружение
+.env
+.env.local
+
+# Логи
+*.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS
+.DS_Store

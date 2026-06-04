@@ -1,0 +1,101 @@
+# MAX × TypeScript — echo-бот (стартер)
+
+Минимальный запускаемый бот для мессенджера **MAX** на **TypeScript**, использующий
+официальный SDK [`@maxhub/max-bot-api`](https://github.com/max-messenger/max-bot-api-client-ts).
+Бот отвечает тем же текстом, что ему прислали (echo).
+
+## Требования
+
+- **Node.js ≥ 18.18.0** (требование SDK)
+- Аккаунт в мессенджере MAX
+
+## 1. Получить токен бота
+
+Токен выдаёт сервисный бот **@MasterBot** (аналог Telegram BotFather):
+
+1. Откройте https://max.ru/masterbot и нажмите **Start**.
+2. Отправьте команду `/create`.
+3. Задайте username (латиница, оканчивается на `bot` или `_bot`) и отображаемое имя.
+4. MasterBot пришлёт **токен** прямо в чат.
+
+> Для боевой публикации MAX может требовать создание бота через бизнес-платформу
+> [business.max.ru](https://business.max.ru) с верификацией юрлица. Токен — прямой доступ
+> к боту, не публикуйте его.
+
+## 2. Настроить и запустить
+
+```bash
+cd max/typescript
+
+# зависимости
+npm install
+
+# конфигурация: скопируйте пример и вставьте токен
+cp .env.example .env
+# затем впишите BOT_TOKEN=... в .env
+
+# запуск (long polling)
+npm run dev      # с авто-перезапуском при изменениях
+# или
+npm start
+```
+
+Напишите боту в MAX — он ответит тем же текстом.
+
+## Скрипты
+
+| Команда             | Что делает                                  |
+| ------------------- | ------------------------------------------- |
+| `npm run dev`       | Запуск с авто-перезапуском (`tsx watch`)    |
+| `npm start`         | Запуск бота                                 |
+| `npm run build`     | Компиляция TypeScript → `dist/`             |
+| `npm run typecheck` | Проверка типов без сборки                   |
+| `npm run verify:local` | Локальная проверка эхо без токена (см. ниже) |
+
+## Как это устроено
+
+```ts
+const bot = new Bot(token);
+bot.on('message_created', (ctx) => ctx.reply(ctx.message.body.text));
+bot.start();
+```
+
+- `bot.start()` запускает **long polling** — SDK периодически опрашивает `GET /updates`
+  на `https://platform-api.max.ru`, авторизуясь заголовком `Authorization: <token>`.
+- Событие `message_created` — новое входящее сообщение; текст в `ctx.message.body.text`.
+- `ctx.reply(text)` отправляет ответ (под капотом `POST /messages`).
+
+### Long polling vs Webhook
+
+Этот стартер использует **long polling** — проще всего для разработки. Для production
+MAX рекомендует **webhook** (`POST /subscriptions`). Long polling и webhook
+взаимоисключающи: при активной webhook-подписке long polling не работает.
+
+## Проверка без токена (`npm run verify:local`)
+
+Получить токен MAX могут только верифицированные **ИП/юрлица — резиденты РФ**
+(физлицам и самозанятым он недоступен). Чтобы убедиться, что бот работает, есть
+локальная проверка без токена и без обращения к реальному MAX:
+
+```bash
+npm run verify:local
+```
+
+Скрипт [`verify-local.mjs`](verify-local.mjs) поднимает **фейковый MAX-сервер** на
+`localhost`, направляет на него настоящий SDK через `clientOptions.baseUrl`,
+симулирует входящее сообщение и проверяет исходящий `POST /messages`:
+
+- ✅ на текст бот отвечает тем же текстом в тот же чат;
+- ✅ авторизация — сырой токен в заголовке `Authorization` (без `Bearer`);
+- 🔍 на сообщение с пустым текстом ответа нет (guard `if (!text) return`).
+
+> Эта проверка подтверждает корректность **кода и интеграции с SDK**. Она не
+> заменяет проверку против реального MAX (для неё нужен токен), но это максимально
+> близкий воспроизводимый аналог. Обработчик в скрипте дублирует логику `src/index.ts` —
+> при изменении бота правьте оба места.
+
+## Источники
+
+- Официальный SDK: <https://github.com/max-messenger/max-bot-api-client-ts> (npm `@maxhub/max-bot-api`)
+- Документация Bot API: <https://dev.max.ru/docs-api>
+- Получение токена: <https://max.ru/masterbot>
