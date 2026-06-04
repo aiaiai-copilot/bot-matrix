@@ -148,7 +148,9 @@ if __name__ == "__main__":
   - `GET /chats/{id}` → `Chat` (`chat_id`, `type='dialog'`, `status='active'`, `last_event_time`,
     `participants_count`, `is_public`) — вызывается `enrich_event` для message-апдейта;
   - `POST /messages` → `{"message": <Message>}` (`SendedMessage`); здесь ловим эхо.
-- Обработчик в харнессе — дословная копия логики `bot.py` (как в TS-ячейке; та же оговорка «правьте оба места»).
+- Хендлеры берутся из `bot.py` напрямую: `from bot import dp` (импорт регистрирует реальные
+  `on_start`/`echo` на `dp`, но `main()` не запускает — он под `if __name__ == "__main__"`). Так харнесс
+  гоняет НАСТОЯЩИЕ обработчики бота, без дублирования логики (улучшение против TS-ячейки, где код копировался).
 - Проверяет:
   - ✅ happy path: на текст бот ответил **тем же текстом** в **тот же чат** (`POST /messages?chat_id=…`,
     тело `{"text": …}`);
