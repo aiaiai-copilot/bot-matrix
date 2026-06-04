@@ -20,6 +20,14 @@
 
 Эти факты — основа корректности кода ниже. Не менять без сверки с исходниками.
 
+> ⚠️ **Обновление (исполнение, 2026-06-04):** установлена `maxapi` **0.9.18**, где два факта ниже
+> изменились — SDK мигрировал на хост **`https://platform-api.max.ru`** + токен **заголовком
+> `Authorization`** (override хоста — через инстанс `bot.api_url`/`set_api_url()`, не class-атрибут
+> `API_URL`). Поэтому реализованный `verify_local.py` бьёт по `bot.api_url` и проверяет заголовок
+> `Authorization` (а не `access_token` query), а README ячейки описывает современный хост. Остальное
+> (импорты, фильтры, `auto_requests`, порядок хендлеров, эндпоинты) подтвердилось в 0.9.18. Источник
+> истины — `max/python/{verify_local.py,README.md}`.
+
 - Импорты: `from maxapi import Bot, Dispatcher, F`; `from maxapi.types import MessageCreated, CommandStart`.
 - Хендлер: `@dp.message_created(<фильтр>)`; функция получает `event: MessageCreated`.
 - Текст входящего: `event.message.body.text` (НЕ `event.message.text`). Ответ: `await event.message.answer(text)`.
