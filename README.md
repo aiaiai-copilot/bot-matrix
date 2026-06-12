@@ -19,6 +19,7 @@ bot-matrix/
 | --------------------- | ---------- | ------ |
 | **Telegram**          | ✅ [`telegram/typescript`](telegram/typescript) | ✅ [`telegram/python`](telegram/python) |
 | **MAX**               | ✅ [`max/typescript`](max/typescript) | ✅ [`max/python`](max/python) |
+| **VK**                | ✅ [`vk/typescript`](vk/typescript) | ✅ [`vk/python`](vk/python) |
 
 ✅ — готов · 🚧 — в работе · — — запланирован
 
