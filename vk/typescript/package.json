@@ -1,0 +1,26 @@
+{
+  "name": "vk-typescript-echo-bot-starter",
+  "version": "0.1.0",
+  "description": "Минимальный echo-бот сообщества VK на TypeScript (SDK vk-io)",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=18.18.0"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "verify:local": "tsx verify-local.ts"
+  },
+  "dependencies": {
+    "vk-io": "^4.10.1",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
